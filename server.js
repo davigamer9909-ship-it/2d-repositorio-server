@@ -15,7 +15,7 @@ const wss = new WebSocket.Server({ server: httpServer });
 const rooms = new Map();
 const queue = [];
 
-let nextPlayerId = 1;
+let nextPlayerId = 0;
 
 function send(socket, data) {
     if (socket.readyState === WebSocket.OPEN) {
@@ -44,19 +44,9 @@ function createRoom(players, code = generateCode()) {
 
     rooms.set(code, room);
 
-    for (const socket of players) {
-        const peers = Array.from(room.keys())
-            .filter(id => id !== socket.playerId);
-
-        send(socket, {
-            type: "matched",
-            room: code,
-            peer_id: socket.playerId,
-            peers: peers
-        });
-    }
-
     console.log("Sala criada:", code);
+
+    return code;
 }
 
 function removeFromQueue(socket) {
@@ -71,11 +61,6 @@ function findRandomPlayers(socket) {
     if (socket.roomId) return;
 
     removeFromQueue(socket);
-
-    if (socket.playerId === null) {
-        socket.playerId = ++nextPlayerId;
-    }
-
     queue.push(socket);
 
     send(socket, {
@@ -83,22 +68,35 @@ function findRandomPlayers(socket) {
         message: "Procurando jogadores..."
     });
 
-    console.log("Na fila:", queue.length);
-
     while (queue.length >= 2) {
         const players = [];
 
         while (queue.length > 0 && players.length < MAX_PLAYERS) {
             const player = queue.shift();
 
-            if (player.readyState === WebSocket.OPEN &&
-                !player.roomId) {
+            if (
+                player.readyState === WebSocket.OPEN &&
+                !player.roomId
+            ) {
                 players.push(player);
             }
         }
 
         if (players.length >= 2) {
-            createRoom(players);
+            const code = createRoom(players);
+
+            for (const player of players) {
+                const peers = Array.from(
+                    rooms.get(code).keys()
+                ).filter(id => id !== player.playerId);
+
+                send(player, {
+                    type: "matched",
+                    room: code,
+                    peer_id: player.playerId,
+                    peers: peers
+                });
+            }
         } else {
             queue.unshift(...players);
             break;
@@ -108,7 +106,6 @@ function findRandomPlayers(socket) {
 
 function closeRoom(roomId, reason) {
     const room = rooms.get(roomId);
-
     if (!room) return;
 
     for (const player of room.values()) {
@@ -121,15 +118,12 @@ function closeRoom(roomId, reason) {
     }
 
     rooms.delete(roomId);
-
-    console.log("Sala encerrada:", roomId);
 }
 
 function leaveRoom(socket) {
     removeFromQueue(socket);
 
     const roomId = socket.roomId;
-
     if (!roomId) return;
 
     const room = rooms.get(roomId);
@@ -173,12 +167,10 @@ wss.on("connection", (socket) => {
             return;
         }
 
-        // PROCURAR JOGADOR ALEATÓRIO
         if (msg.type === "quick_match") {
             findRandomPlayers(socket);
         }
 
-        // CANCELAR BUSCA
         else if (msg.type === "cancel_search") {
             removeFromQueue(socket);
 
@@ -187,15 +179,12 @@ wss.on("connection", (socket) => {
             });
         }
 
-        // CRIAR SALA PRIVADA
         else if (msg.type === "create_room") {
             if (socket.roomId) return;
 
             removeFromQueue(socket);
 
-            const code = generateCode();
-
-            createRoom([socket], code);
+            const code = createRoom([socket]);
 
             send(socket, {
                 type: "room_created",
@@ -205,7 +194,6 @@ wss.on("connection", (socket) => {
             });
         }
 
-        // ENTRAR COM CÓDIGO
         else if (msg.type === "join_room") {
             if (socket.roomId) return;
 
@@ -254,10 +242,8 @@ wss.on("connection", (socket) => {
             console.log("Entrou na sala:", code);
         }
 
-        // SINALIZAÇÃO WEBRTC
         else if (msg.type === "signal") {
             const room = rooms.get(socket.roomId);
-
             if (!room) return;
 
             const target = room.get(Number(msg.to));
@@ -271,7 +257,6 @@ wss.on("connection", (socket) => {
             });
         }
 
-        // SAIR
         else if (msg.type === "leave") {
             leaveRoom(socket);
         }
