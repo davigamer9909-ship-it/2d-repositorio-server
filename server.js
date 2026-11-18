@@ -257,6 +257,32 @@ wss.on("connection", (socket) => {
             });
         }
 
+        // CHAT ONLINE
+        else if (msg.type === "chat") {
+            const room = rooms.get(socket.roomId);
+            if (!room) return;
+
+            const message = String(msg.message || "").trim();
+
+            if (!message || message.length > 200) return;
+
+            const chatData = {
+                type: "chat",
+                from: socket.playerId,
+                message: message
+            };
+
+            // Envia para todos da sala
+            for (const player of room.values()) {
+                send(player, chatData);
+            }
+
+            console.log(
+                "CHAT [" + socket.roomId + "] " +
+                socket.playerId + ": " + message
+            );
+        }
+
         else if (msg.type === "leave") {
             leaveRoom(socket);
         }
